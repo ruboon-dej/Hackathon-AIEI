@@ -1,0 +1,8 @@
+fastapi~=0.111
+uvicorn[standard]~=0.30
+
+# Detection + QR + DataFrame (used by your script)
+opencv-python~=4.10
+numpy~=1.26
+pandas~=2.2
+requests~=2.32
