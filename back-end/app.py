@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 import os, time, asyncio, logging, sys
 import pandas as pd
+from detect import detection_people
 
 # -----------------------------
 # Logging (timestamps + level)
@@ -151,6 +152,12 @@ class QRIn(BaseModel):
 @app.get("/health")
 def health():
     return {"ok": True, "sheet_url": SHEET_URL, "state": state}
+
+@app.get("/detect")
+def detection():
+    temp = detection_people()
+    return {"People": temp[0], "QR": temp[1], "HN": temp[2], "nationality": temp[3], "status": temp[4]}
+
 
 @app.get("/api/patient/{hn}")
 def api_patient(hn: str):
