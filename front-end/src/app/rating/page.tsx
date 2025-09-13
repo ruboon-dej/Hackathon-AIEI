@@ -81,7 +81,7 @@ export default function Page() {
         </button>
         <button
           onClick={() => send(2)}
-          className={`${btn} border-green-200`}
+          className={`${btn} border-red-200`}
           aria-label="พึงพอใจมาก (2)"
         >
           <span className="text-5xl md:text-6xl" aria-hidden>

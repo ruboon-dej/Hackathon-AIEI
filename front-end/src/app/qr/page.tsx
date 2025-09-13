@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000").replace(/\/$/, "");
 
@@ -12,12 +13,14 @@ export default function QRScanPage() {
   const startedRef = useRef(false);      // guard Strict Mode double init
   const handledRef = useRef(false);      // ensure we handle first scan only
   const stoppingRef = useRef(false);     // prevent double stop()
+  const router = useRouter();
 
   const [cams, setCams] = useState<Cam[]>([]);
   const [camId, setCamId] = useState("");
   const [status, setStatus] = useState("idle");
   const [hn, setHn] = useState<string | null>(null);
   const [sent, setSent] = useState<"" | "waiting" | "ok" | "fail">("");
+  const timeoutRef = useRef<number | null>(null);
 
   // stop/clear but ignore "not running" errors
   const safeStop = async () => {
@@ -25,11 +28,10 @@ export default function QRScanPage() {
     if (!s || stoppingRef.current) return;
     stoppingRef.current = true;
     try {
-      // Some versions expose isScanning(); if not, just try/await stop().
       const maybeFn = (s as any).isScanning;
       const isScanning = typeof maybeFn === "function" ? maybeFn.call(s) : true;
       if (isScanning) await s.stop();
-    } catch (_) { /* ignore "not running" */ }
+    } catch (_) {}
     try { await s.clear?.(); } catch (_) {}
     stoppingRef.current = false;
   };
@@ -70,9 +72,8 @@ export default function QRScanPage() {
             setStatus("scanned");
             setSent("waiting");
 
-            await safeStop(); // stop safely; ignore if already stopped
+            await safeStop();
 
-            // Send HN to backend so other pages update via WS
             try {
               const r = await fetch(`${API_BASE}/trigger/qr`, {
                 method: "POST",
@@ -80,11 +81,17 @@ export default function QRScanPage() {
                 body: JSON.stringify({ hn: code }),
               });
               setSent(r.ok ? "ok" : "fail");
+
+              if (r.ok) {
+                timeoutRef.current = window.setTimeout(() => {
+                router.push("/rating");
+                }, 3000);
+              }
             } catch {
               setSent("fail");
             }
           },
-          () => {} // ignore per-frame decode errors
+          () => {} // ignore decode errors
         );
 
         if (!mounted) return;
@@ -97,13 +104,12 @@ export default function QRScanPage() {
 
     return () => {
       mounted = false;
-      safeStop();               // cleanup tries once, safely
+      safeStop();
       startedRef.current = false;
     };
-  }, [camId]); // you can remove camId here if you don't need camera switching
+  }, [camId, router]);
 
   const rescan = () => {
-    // simplest: full reload to re-init scanner cleanly
     window.location.reload();
   };
 
@@ -119,7 +125,7 @@ export default function QRScanPage() {
         </select>
       </div>
 
-      {status !== "scanned" && <div id="qr-reader" style={{ marginTop: 16 }} />}
+      {status !== "scanned" && <div id={mountId} style={{ marginTop: 16 }} />}
 
       <p style={{ color: "#777", marginTop: 8 }}>
         status: {status}{hn ? ` · HN: ${hn}` : ""}{sent ? ` · POST: ${sent}` : ""}
@@ -127,8 +133,9 @@ export default function QRScanPage() {
 
       {hn && (
         <div style={{ marginTop: 16, padding: 12, border: "1px solid #eee", borderRadius: 8 }}>
-          <div><b>Decoded HN:</b> <code>{hn}</code></div>
-          <button onClick={rescan} style={{ marginTop: 12, padding: "8px 12px" }}>Scan again</button>
+          <h1 className="text-4xl font-bold">
+            สำเร็จ
+          </h1>
         </div>
       )}
     </main>

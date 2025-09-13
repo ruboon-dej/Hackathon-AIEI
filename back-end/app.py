@@ -12,34 +12,25 @@ MESSAGES = [{"id": 1, "text": "hello"}]
 _next_id = 2
 last_hn = None
 
-# @app.get("/api/messages")
-# def get_messages():
-#     @app.route("/", methods=["GET"])
-#     status = (request.args.get("status") or "Register").strip()
+@app.post("/api/feedback")
+def save_feedback():
+    body = request.get_json(silent=True) or {}
+    hn = (body.get("hn") or "").strip()
+    status = (body.get("status") or "").strip()
+    question = (body.get("question") or "").strip()
+    rating = int(body.get("rating") or 0)
+    comment = (body.get("comment") or "").strip()
 
-#     # ดึงคำถามตามสถานี (ไทยก่อน ถ้าไม่มีค่อยใช้ EN)
-#     try:
-#         q = random_question(status=status) or {"status": status, "th": "", "en": ""}
-#     except Exception as e:
-#         print("[WARN] random_question failed:", e)
-#         q = {"status": status, "th": "", "en": ""}
+    if not hn:
+        return jsonify({"ok": False, "error": "HN is required"}), 400
 
-#     question_text = q["th"] if q.get("th") else (q.get("en") or "วันนี้ได้รับบริการส่วนนี้เป็นอย่างไร?")
-
-#     # สุ่ม HN ของสถานีเดียวกัน (แสดงเป็นตัวอย่าง/ช่วยพิมพ์)
-#     try:
-#         hn_prefill = get_random_hn(status=status) or ""
-#     except Exception as e:
-#         print("[WARN] get_random_hn failed:", e)
-#         hn_prefill = ""
-
-    # return render_template(
-    #     "form.html",
-    #     status=q.get("status", status),
-    #     question_text=question_text,
-    #     hn_prefill=hn_prefill
-    # )
-    # return jsonify({"ok": True, "data": MESSAGES})
+    try:
+        from gsheet import append_feedback
+        append_feedback(hn, status, question, rating, comment)
+        return jsonify({"ok": True, "msg": "Feedback saved"})
+    except Exception as e:
+        print("[ERROR] append_feedback:", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.post("/api/messages")
 def create_message():
