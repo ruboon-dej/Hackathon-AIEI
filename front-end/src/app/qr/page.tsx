@@ -85,7 +85,7 @@ export default function QRScanPage() {
               if (r.ok) {
                 timeoutRef.current = window.setTimeout(() => {
                 router.push("/rating");
-                }, 3000);
+                }, 100);
               }
             } catch {
               setSent("fail");

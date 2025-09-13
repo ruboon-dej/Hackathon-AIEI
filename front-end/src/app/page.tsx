@@ -20,7 +20,7 @@ export default function Page() {
 
   return (
     <main className="min-h-screen bg-white">
-      <audio src="/assets/ding.mp3" autoPlay />
+      <audio src="/assets/QR.mp3" autoPlay loop />
       <div className="flex-col items-center justify-center w-full pt-20">
         <video
           src="/assets/QR.mov"
