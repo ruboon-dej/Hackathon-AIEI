@@ -6,3 +6,5 @@ opencv-python~=4.10
 numpy~=1.26
 pandas~=2.2
 requests~=2.32
+flask
+flask-cors

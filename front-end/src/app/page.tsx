@@ -52,7 +52,7 @@ export default function Page() {
       unlock().then(() => {
         if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
         timeoutRef.current = window.setTimeout(() => {
-          router.push("/other");
+          router.push("/qr");
         }, 5000);
       });
     };
