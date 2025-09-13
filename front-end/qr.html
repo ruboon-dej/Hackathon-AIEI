@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>QR → HN → Redirect</title>
+<script src="https://unpkg.com/html5-qrcode" defer></script>
+<style>
+  body{font-family:system-ui,Arial,sans-serif;margin:16px}
+  .wrap{max-width:560px;margin:0 auto}
+  #reader{width:100%;max-width:480px;margin:12px auto}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  button,select{padding:8px 12px;border:1px solid #ddd;border-radius:10px}
+  .tag{padding:6px 10px;background:#f3f4f6;border-radius:8px}
+  .hn{font-weight:700}
+  .ok{color:#065f46}.err{color:#991b1b}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Scan QR → Redirect</h1>
+  <div class="row">
+    <select id="cameraSelect"></select>
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" disabled>Stop</button>
+  </div>
+  <div id="reader"></div>
+  <div class="tag">
+    Status: <span id="statusText">Idle</span> |
+    HN: <span id="hnText" class="hn">—</span> |
+    Raw: <span id="rawText">—</span>
+  </div>
+</div>
+
+<script>
+const REDIRECT_MODE = "query"; 
+const REDIRECT_BASE = "/patient.html"; 
+
+function parseHN(text){
+  const t=String(text).trim();
+  const m=t.match(/^[A-Z0-9-]{3,20}$/i); if(m) return m[0];
+  const m2=t.match(/\bHN[:\s#-]*([A-Z0-9-]{3,20})\b/i); return m2?m2[1]:"";
+}
+
+function destURL(hn){
+  if(REDIRECT_MODE==="path") return `${REDIRECT_BASE.replace(/\/$/,"")}/${encodeURIComponent(hn)}`;
+  const u=new URL(REDIRECT_BASE, window.location.origin);
+  u.searchParams.set("hn", hn);
+  return u.toString();
+}
+
+const statusText=document.getElementById("statusText");
+const hnText=document.getElementById("hnText");
+const rawText=document.getElementById("rawText");
+const startBtn=document.getElementById("startBtn");
+const stopBtn=document.getElementById("stopBtn");
+const cameraSelect=document.getElementById("cameraSelect");
+
+let html5QrCode=null, currentCameraId=null, scanning=false, redirected=false;
+
+function setStatus(msg, err=false){ statusText.textContent=msg; statusText.className=err?"err":"ok"; }
+
+async function listCameras(){
+  try{
+    const devices=await Html5Qrcode.getCameras();
+    cameraSelect.innerHTML="";
+    devices.forEach((d,i)=>{ const o=document.createElement("option"); o.value=d.id; o.textContent=d.label||`Camera ${i+1}`; cameraSelect.appendChild(o); });
+    if(devices.length) currentCameraId=devices[0].id;
+  }catch(e){ setStatus("Camera unavailable or permission denied.", true); }
+}
+
+async function startScan(){
+  if(scanning) return;
+  if(!currentCameraId) await listCameras();
+  if(!currentCameraId) return;
+  html5QrCode=new Html5Qrcode("reader");
+  try{
+    await html5QrCode.start({deviceId:{exact:currentCameraId}}, {fps:8, qrbox:240}, onScanSuccess, ()=>{});
+    scanning=true; setStatus("Scanning…"); startBtn.disabled=true; stopBtn.disabled=false; cameraSelect.disabled=true;
+  }catch(e){ setStatus("Failed to start: "+e.message, true); }
+}
+
+async function stopScan(){
+  if(!scanning) return;
+  try{ await html5QrCode.stop(); await html5QrCode.clear(); }catch(_){}
+  scanning=false; setStatus("Stopped"); startBtn.disabled=false; stopBtn.disabled=true; cameraSelect.disabled=false;
+}
+
+function onScanSuccess(decodedText){
+  if(redirected) return;
+  rawText.textContent=decodedText;
+  const hn=parseHN(decodedText);
+  hnText.textContent=hn||"Not found";
+  if(!hn) return;
+  redirected=true;
+  stopScan().finally(()=>{ window.location.href = destURL(hn); });
+}
+
+cameraSelect.addEventListener("change", e=>{
+  currentCameraId=e.target.value;
+  if(scanning) stopScan().then(startScan);
+});
+startBtn.addEventListener("click", startScan);
+stopBtn.addEventListener("click", stopScan);
+
+(async()=>{ await listCameras(); setStatus("Ready"); })();
+</script>
+</body>
+</html>
