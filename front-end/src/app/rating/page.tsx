@@ -1,4 +1,4 @@
-// src/app/page.tsx
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -6,7 +6,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 
 type Score = 1 | 2 | 3 | 4 | 5;
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:5000").replace(/\/$/, "");
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000").replace(/\/$/, "");
 
 export default function Page() {
   const sp = useSearchParams();
@@ -20,19 +20,19 @@ export default function Page() {
   const [sendStatus, setSendStatus] = useState<"idle" | "sending" | "ok" | "error">("idle");
   const [last, setLast] = useState<Score | null>(null);
 
-  // Extract question text
-  const questionText = useMemo(() => {
-    const q = qPayload?.data ?? qPayload ?? {};
-    if (typeof q === "string") return q.trim();
-    return (
-      (q.question?.toString().trim()) ||
-      (q.th?.toString().trim()) ||
-      (q.en?.toString().trim()) ||
-      "วันนี้ได้รับบริการส่วนนี้เป็นอย่างไร?"
-    );
-  }, [qPayload]);
+  // derive question & hn exactly from Flask response: { question, hn }
+  const questionText = useMemo(
+    () => (qPayload?.question || "").toString().trim(),
+    [qPayload]
+  );
+  const hn = useMemo(
+    () => (qPayload?.hn || "").toString().trim(),
+    [qPayload]
+  );
 
-  // Fetch question once
+  console.log(`/assets/${questionText}.mp3`);
+
+  // fetch question once (Flask decides optimal question + returns last_hn)
   useEffect(() => {
     const ac = new AbortController();
     (async () => {
@@ -44,12 +44,13 @@ export default function Page() {
           cache: "no-store",
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
+        const json = await res.json(); // { question, hn }
         setQPayload(json);
       } catch (e: any) {
-        if (e?.name === "AbortError") return;
-        setQError(e?.message || "load failed");
-        setQPayload({ question: "" });
+        if (e?.name !== "AbortError") {
+          setQError(e?.message || "load failed");
+          setQPayload({ question: "" });
+        }
       } finally {
         setQLoading(false);
       }
@@ -57,28 +58,28 @@ export default function Page() {
     return () => ac.abort();
   }, []);
 
-  // Submit evaluation
+  // submit to Flask with required fields
   async function send(score: Score) {
     try {
       setSendStatus("sending");
       setLast(score);
-      const res = await fetch("/api/submit", {
+
+      const res = await fetch(`${API_BASE}/api/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          score,
-          status: statusParam,
-          question: questionText,
-          ua: typeof navigator !== "undefined" ? navigator.userAgent : "",
+          hn,                       // REQUIRED by backend
+          status: statusParam,      // optional context
+          rating: score,            // backend expects 'rating'
+          comment: "",              // optional
         }),
       });
+
       if (!res.ok) throw new Error("bad");
       setSendStatus("ok");
 
-      // ✅ Route to another page after success
-      setTimeout(() => {
-        router.push("/thank");
-      }, 1000);
+      // brief success flash, then route
+      setTimeout(() => router.push("/thank"), 800);
     } catch {
       setSendStatus("error");
     } finally {
@@ -91,14 +92,14 @@ export default function Page() {
 
   return (
     <main className="min-h-screen flex flex-col items-center px-4 py-10 md:py-14">
-      {/* Play audio if question exists */}
+      {/* Play audio only if we actually have a question */}
       {questionText && (
-        <audio src={`/assets/${encodeURIComponent(questionText)}.mp3`} autoPlay />
+        <audio src={`/assets/${questionText}.mp3`} autoPlay />
       )}
 
       <div className="w-full max-w-5xl">
         <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
-          {qLoading ? "กำลังโหลดคำถาม…" : questionText}
+          {qLoading ? "กำลังโหลดคำถาม…" : (questionText || "—")}
         </h1>
         <div className="mt-2 text-sm text-gray-500">
           สถานี: <b>{statusParam}</b>
