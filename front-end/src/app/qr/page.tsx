@@ -1,136 +1,173 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000").replace(/\/$/, "");
+const QRBOX = 300;
+const DEDUPE_MS = 1500;
 
-type Cam = { id: string; label: string };
+function parseHN(text: string): string {
+  const t = String(text).trim();
+  const m = t.match(/^[A-Z0-9-]{3,20}$/i);
+  if (m) return m[0];
+  const m2 = t.match(/\bHN[:\s#-]*([A-Z0-9-]{3,20})\b/i);
+  return m2 ? m2[1] : "";
+}
+
+type CamDev = { id: string; label: string };
 
 export default function QRScanPage() {
-  const mountId = "qr-reader";
+  const router = useRouter();
+
+  const statusRef = useRef<HTMLSpanElement | null>(null);
+  const hnRef = useRef<HTMLSpanElement | null>(null);
+  const rawRef = useRef<HTMLSpanElement | null>(null);
+
+  const [candidates, setCandidates] = useState<CamDev[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+
   const scannerRef = useRef<any>(null);
-  const startedRef = useRef(false);      // guard Strict Mode double init
-  const handledRef = useRef(false);      // ensure we handle first scan only
-  const stoppingRef = useRef(false);     // prevent double stop()
+  const redirectedRef = useRef(false);
+  const lastTextRef = useRef<string>("");
+  const lastTsRef = useRef<number>(0);
 
-  const [cams, setCams] = useState<Cam[]>([]);
-  const [camId, setCamId] = useState("");
-  const [status, setStatus] = useState("idle");
-  const [hn, setHn] = useState<string | null>(null);
-  const [sent, setSent] = useState<"" | "waiting" | "ok" | "fail">("");
+  function setStatus(msg: string, err = false) {
+    if (statusRef.current) {
+      statusRef.current.textContent = msg;
+      statusRef.current.className = err ? "err" : "ok";
+    }
+  }
 
-  // stop/clear but ignore "not running" errors
-  const safeStop = async () => {
-    const s = scannerRef.current;
-    if (!s || stoppingRef.current) return;
-    stoppingRef.current = true;
+  async function getHtml5Qrcode() {
+    const mod: any = await import("html5-qrcode");
+    return mod.Html5Qrcode ?? mod.default?.Html5Qrcode ?? mod;
+  }
+
+  async function buildCameraList() {
     try {
-      // Some versions expose isScanning(); if not, just try/await stop().
-      const maybeFn = (s as any).isScanning;
-      const isScanning = typeof maybeFn === "function" ? maybeFn.call(s) : true;
-      if (isScanning) await s.stop();
-    } catch (_) { /* ignore "not running" */ }
-    try { await s.clear?.(); } catch (_) {}
-    stoppingRef.current = false;
-  };
+      const mod: any = await import("html5-qrcode");
+      const Html5Qrcode = mod.Html5Qrcode ?? mod.default?.Html5Qrcode ?? mod;
+      const devs = await Html5Qrcode.getCameras();
+      if (!devs.length) {
+        setStatus("No camera found", true);
+        return;
+      }
+      const cleaned: CamDev[] = devs.map((d: any, i: number) => ({
+        id: d.id,
+        label: d.label || `Camera ${i + 1}`,
+      }));
+      setCandidates(cleaned);
+    } catch {
+      setStatus("Camera unavailable", true);
+    }
+  }
+
+  async function stopScan() {
+    if (!scannerRef.current) return;
+    try {
+      await scannerRef.current.stop();
+      await scannerRef.current.clear();
+    } catch {}
+    scannerRef.current = null;
+  }
+
+  async function tryStartOn(id: string) {
+    const Html5Qrcode: any = await getHtml5Qrcode();
+    const s = new Html5Qrcode("reader");
+    try {
+      await s.start(
+        { deviceId: { exact: id } },
+        { fps: 10, qrbox: QRBOX },
+        onScanSuccess,
+        () => {}
+      );
+      scannerRef.current = s;
+      setActiveId(id);
+      setStatus(`Scanning…`);
+      return true;
+    } catch {
+      await s.clear().catch(() => {});
+      return false;
+    }
+  }
+
+  async function startFirstWorkingCamera() {
+    setStatus("Starting camera…");
+    for (const dev of candidates) {
+      const ok = await tryStartOn(dev.id);
+      if (ok) return;
+    }
+    setStatus("Failed to start any camera", true);
+  }
+
+  function onScanSuccess(decodedText: string) {
+    const now = Date.now();
+    if (decodedText === lastTextRef.current && now - lastTsRef.current < DEDUPE_MS) return;
+    lastTextRef.current = decodedText;
+    lastTsRef.current = now;
+
+    if (rawRef.current) rawRef.current.textContent = decodedText;
+    const hn = parseHN(decodedText);
+    if (hnRef.current) hnRef.current.textContent = hn || "Not found";
+    if (!hn || redirectedRef.current) return;
+
+    redirectedRef.current = true;
+    stopScan().finally(() => {
+      // Redirect to another page with HN in query
+      router.push(`/patient?hn=${encodeURIComponent(hn)}`);
+    });
+  }
 
   useEffect(() => {
-    let mounted = true;
-    if (startedRef.current) return; // Strict Mode guard
-    startedRef.current = true;
+    buildCameraList();
+    return () => { stopScan(); };
+  }, []);
 
-    (async () => {
-      try {
-        setStatus("starting");
-        const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import("html5-qrcode");
-
-        const list = await (Html5Qrcode as any).getCameras?.();
-        const available: Cam[] = (list || []).map((c: any) => ({ id: c.id, label: c.label || "Camera" }));
-        if (!mounted) return;
-
-        setCams(available);
-        const preferred = available.find(c => /back|rear/i.test(c.label))?.id || available[0]?.id;
-        if (!preferred) { setStatus("no-camera"); return; }
-        setCamId(prev => prev || preferred);
-
-        const s = new Html5Qrcode(mountId, { verbose: false });
-        scannerRef.current = s;
-
-        await s.start(
-          camId || preferred,
-          { fps: 10, qrbox: { width: 250, height: 250 }, formatsToSupport: [(Html5QrcodeSupportedFormats as any).QR_CODE] },
-          async (decodedText: string) => {
-            if (!mounted || handledRef.current) return;
-            handledRef.current = true;
-
-            const code = decodedText.trim();
-            if (!code) return;
-
-            setHn(code);
-            setStatus("scanned");
-            setSent("waiting");
-
-            await safeStop(); // stop safely; ignore if already stopped
-
-            // Send HN to backend so other pages update via WS
-            try {
-              const r = await fetch(`${API_BASE}/trigger/qr`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ hn: code }),
-              });
-              setSent(r.ok ? "ok" : "fail");
-            } catch {
-              setSent("fail");
-            }
-          },
-          () => {} // ignore per-frame decode errors
-        );
-
-        if (!mounted) return;
-        setStatus("scanning");
-      } catch (e) {
-        console.error(e);
-        setStatus("error");
-      }
-    })();
-
-    return () => {
-      mounted = false;
-      safeStop();               // cleanup tries once, safely
-      startedRef.current = false;
-    };
-  }, [camId]); // you can remove camId here if you don't need camera switching
-
-  const rescan = () => {
-    // simplest: full reload to re-init scanner cleanly
-    window.location.reload();
-  };
+  useEffect(() => {
+    if (candidates.length) startFirstWorkingCamera();
+    return () => { stopScan(); };
+  }, [candidates]);
 
   return (
-    <main style={{ maxWidth: 760, margin: "40px auto", padding: 16 }}>
-      <h1>QR Scan → Send HN to Backend</h1>
-
-      <div style={{ marginTop: 12 }}>
-        <label style={{ fontSize: 14, color: "#666" }}>Camera:&nbsp;</label>
-        <select value={camId} onChange={(e) => setCamId(e.target.value)} style={{ padding: 6 }}>
-          {cams.length === 0 && <option value="">(no camera)</option>}
-          {cams.map((c) => <option key={c.id} value={c.id}>{c.label || c.id}</option>)}
-        </select>
+    <main className="screen">
+      <h1 className="title">Scan QR</h1>
+      <div id="reader" className="reader" />
+      <div className="status">
+        <span ref={statusRef}>Idle</span>
+        <span> | HN: <b ref={hnRef}>—</b></span>
+        <span> | Raw: <span ref={rawRef}>—</span></span>
       </div>
 
-      {status !== "scanned" && <div id="qr-reader" style={{ marginTop: 16 }} />}
-
-      <p style={{ color: "#777", marginTop: 8 }}>
-        status: {status}{hn ? ` · HN: ${hn}` : ""}{sent ? ` · POST: ${sent}` : ""}
-      </p>
-
-      {hn && (
-        <div style={{ marginTop: 16, padding: 12, border: "1px solid #eee", borderRadius: 8 }}>
-          <div><b>Decoded HN:</b> <code>{hn}</code></div>
-          <button onClick={rescan} style={{ marginTop: 12, padding: "8px 12px" }}>Scan again</button>
-        </div>
-      )}
+      <style jsx>{`
+        .screen {
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 16px;
+          background: #0e0e0f;
+          color: #fff;
+          padding: 16px;
+        }
+        .title { font-weight: 600; }
+        .reader {
+          width: min(90vw, 420px);
+          height: min(90vw, 420px);
+          background: #111;
+          border-radius: 14px;
+          overflow: hidden;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+        }
+        .status {
+          width: min(90vw, 720px);
+          padding: 10px 14px;
+          color: #111;
+          background: #f3f4f6;
+          border-radius: 10px;
+        }
+        .ok { color: #10b981 } .err { color: #ef4444 }
+      `}</style>
     </main>
   );
 }
