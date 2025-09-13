@@ -21,14 +21,14 @@ export default function Page() {
   return (
     <main className="min-h-screen bg-white">
       <audio src="/assets/QR.mp3" autoPlay loop />
-      <div className="flex-col items-center justify-center w-full pt-20">
+      <div className="flex flex-col items-center justify-center w-full gap-10">
         <video
           src="/assets/QR.mov"
           autoPlay
           muted
           loop
           playsInline
-          className="w-3/5 items-center justify-center ml-80 mb-20"
+          className="w-3/5 mt-30"
         />
         <div className="flex mt-10 items-center justify-center w-full">
           <h1 className="text-black text-5xl font-bold">Please Scan the QR Code</h1>
